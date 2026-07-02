@@ -73,6 +73,8 @@ run --listen 127.0.0.1:1080 --config %s --verbose
 throne-awg-core probe --config awg.conf --target 1.1.1.1:443 --verbose
 ```
 
+Если нужно проверить альтернативный UDP bind на Windows, добавьте `--std-bind`.
+
 ## Сборка
 
 ```bash

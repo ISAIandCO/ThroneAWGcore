@@ -25,6 +25,7 @@ type Runtime struct {
 
 type Options struct {
 	Verbose bool
+	StdBind bool
 }
 
 func Start(ctx context.Context, cfg *Config, opts Options) (*Runtime, error) {
@@ -49,10 +50,18 @@ func Start(ctx context.Context, cfg *Config, opts Options) (*Runtime, error) {
 			fmt.Fprintf(os.Stderr, "awg: "+format+"\n", args...)
 		}
 	}
-	// Prefer the plain UDP bind for an external desktop helper. On Windows,
-	// NewDefaultBind selects WinRing/RIO when available; StdNetBind is slower
-	// but avoids RIO-specific compatibility issues in an Extra Core process.
-	dev := device.NewDevice(tdev, conn.NewStdNetBind(), &logger)
+	bind := conn.NewDefaultBind()
+	if opts.StdBind {
+		bind = conn.NewStdNetBind()
+	}
+	if opts.Verbose {
+		if opts.StdBind {
+			fmt.Fprintln(os.Stderr, "awg: using StdNetBind")
+		} else {
+			fmt.Fprintln(os.Stderr, "awg: using DefaultBind")
+		}
+	}
+	dev := device.NewDevice(tdev, bind, &logger)
 	if err := dev.IpcSet(ipc); err != nil {
 		dev.Close()
 		return nil, fmt.Errorf("configure awg device: %w", err)

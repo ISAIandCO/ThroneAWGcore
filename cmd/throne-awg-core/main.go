@@ -51,6 +51,7 @@ func runCore(args []string) error {
 	listen := fs.String("listen", "127.0.0.1:1080", "SOCKS5 listen address")
 	configPath := fs.String("config", "", "path to AmneziaWG config")
 	verbose := fs.Bool("verbose", false, "enable verbose AmneziaWG and SOCKS logs")
+	stdBind := fs.Bool("std-bind", false, "force the portable UDP bind instead of the platform default")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -69,7 +70,7 @@ func runCore(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	runtime, err := awg.Start(ctx, cfg, awg.Options{Verbose: *verbose})
+	runtime, err := awg.Start(ctx, cfg, awg.Options{Verbose: *verbose, StdBind: *stdBind})
 	if err != nil {
 		return err
 	}
@@ -111,6 +112,7 @@ func probeConfig(args []string) error {
 	target := fs.String("target", "1.1.1.1:443", "TCP target to dial through AmneziaWG")
 	timeout := fs.Duration("timeout", 15*time.Second, "probe timeout")
 	verbose := fs.Bool("verbose", false, "enable verbose AmneziaWG logs")
+	stdBind := fs.Bool("std-bind", false, "force the portable UDP bind instead of the platform default")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -126,7 +128,7 @@ func probeConfig(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	runtime, err := awg.Start(ctx, cfg, awg.Options{Verbose: *verbose})
+	runtime, err := awg.Start(ctx, cfg, awg.Options{Verbose: *verbose, StdBind: *stdBind})
 	if err != nil {
 		return err
 	}
