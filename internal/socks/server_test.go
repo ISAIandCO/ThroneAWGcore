@@ -80,6 +80,31 @@ func TestConnectRoutesDomainThroughDialer(t *testing.T) {
 	}
 }
 
+func TestConnectSOCKS4A(t *testing.T) {
+	client, serverConn := net.Pipe()
+	defer client.Close()
+
+	dialer := &fakeDialer{}
+	srv := NewServer("127.0.0.1:0", dialer)
+	go srv.handleConn(context.Background(), serverConn)
+
+	req := []byte{0x04, 0x01, 0x01, 0xbb, 0x00, 0x00, 0x00, 0x01, 0x00}
+	req = append(req, []byte("example.com")...)
+	req = append(req, 0x00)
+	_, _ = client.Write(req)
+
+	reply := make([]byte, 8)
+	if _, err := io.ReadFull(client, reply); err != nil {
+		t.Fatal(err)
+	}
+	if reply[1] != 0x5a {
+		t.Fatalf("reply = %v", reply)
+	}
+	if got := dialer.lastRequest(); got != "tcp example.com:443" {
+		t.Fatalf("dial request = %q", got)
+	}
+}
+
 func TestUDPDatagramFramingIPv4(t *testing.T) {
 	packet, err := buildUDPDatagram("1.2.3.4:53", []byte("dns"))
 	if err != nil {
@@ -121,6 +146,9 @@ func TestReadRequestIPv4(t *testing.T) {
 	defer server.Close()
 
 	go func() {
+		_, _ = client.Write([]byte{0x05, 0x01, 0x00})
+		handshake := make([]byte, 2)
+		_, _ = io.ReadFull(client, handshake)
 		req := []byte{0x05, 0x01, 0x00, atypIPv4, 127, 0, 0, 1}
 		var port [2]byte
 		binary.BigEndian.PutUint16(port[:], 8080)
@@ -128,7 +156,7 @@ func TestReadRequestIPv4(t *testing.T) {
 		_, _ = client.Write(req)
 	}()
 
-	got, err := readRequest(server)
+	got, err := readClientRequest(server)
 	if err != nil {
 		t.Fatal(err)
 	}

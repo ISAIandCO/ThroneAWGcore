@@ -13,6 +13,7 @@ import (
 )
 
 const (
+	version4     = 0x04
 	version5     = 0x05
 	authNone     = 0x00
 	authNoAccept = 0xff
@@ -73,36 +74,39 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 
 func (s *Server) handleConn(ctx context.Context, client net.Conn) {
 	defer client.Close()
-	if err := negotiate(client); err != nil {
-		return
-	}
 
-	req, err := readRequest(client)
+	req, err := readClientRequest(client)
 	if err != nil {
 		s.logf("request error from %s: %v", client.RemoteAddr(), err)
 		return
 	}
+	s.logf("request cmd=%d version=%d address=%s from %s", req.cmd, req.version, req.address, client.RemoteAddr())
 
 	switch req.cmd {
 	case cmdConnect:
-		s.handleConnect(ctx, client, req.address)
+		s.handleConnect(ctx, client, req)
 	case cmdUDP:
+		if req.version != version5 {
+			_ = writeReply(client, req.version, repFailure, nil)
+			return
+		}
 		s.handleUDP(ctx, client)
 	default:
-		_ = writeReply(client, repFailure, nil)
+		_ = writeReply(client, req.version, repFailure, nil)
 	}
 }
 
-func (s *Server) handleConnect(ctx context.Context, client net.Conn, address string) {
-	target, err := s.dialer.DialContext(ctx, "tcp", address)
+func (s *Server) handleConnect(ctx context.Context, client net.Conn, req request) {
+	target, err := s.dialer.DialContext(ctx, "tcp", req.address)
 	if err != nil {
-		s.logf("tcp connect %s failed: %v", address, err)
-		_ = writeReply(client, repFailure, nil)
+		s.logf("tcp connect %s failed: %v", req.address, err)
+		_ = writeReply(client, req.version, repFailure, nil)
 		return
 	}
 	defer target.Close()
 
-	if err := writeReply(client, repSuccess, target.LocalAddr()); err != nil {
+	s.logf("tcp connect %s ok", req.address)
+	if err := writeReply(client, req.version, repSuccess, target.LocalAddr()); err != nil {
 		return
 	}
 	proxy(client, target)
@@ -116,12 +120,13 @@ func (s *Server) handleUDP(ctx context.Context, client net.Conn) {
 	udpConn, err := net.ListenPacket("udp", net.JoinHostPort(host, "0"))
 	if err != nil {
 		s.logf("udp associate listen failed: %v", err)
-		_ = writeReply(client, repFailure, nil)
+		_ = writeReply(client, version5, repFailure, nil)
 		return
 	}
 	defer udpConn.Close()
 
-	if err := writeReply(client, repSuccess, udpConn.LocalAddr()); err != nil {
+	s.logf("udp associate listening on %s", udpConn.LocalAddr())
+	if err := writeReply(client, version5, repSuccess, udpConn.LocalAddr()); err != nil {
 		return
 	}
 
@@ -143,15 +148,38 @@ func (s *Server) logf(format string, args ...any) {
 	}
 }
 
-func negotiate(conn net.Conn) error {
-	header := make([]byte, 2)
-	if _, err := io.ReadFull(conn, header); err != nil {
+type request struct {
+	version byte
+	cmd     byte
+	address string
+}
+
+func readClientRequest(conn net.Conn) (request, error) {
+	var first [1]byte
+	if _, err := io.ReadFull(conn, first[:]); err != nil {
+		return request{}, err
+	}
+	switch first[0] {
+	case version5:
+		if err := negotiate5(conn); err != nil {
+			return request{}, err
+		}
+		req, err := readRequest5(conn)
+		req.version = version5
+		return req, err
+	case version4:
+		return readRequest4(conn)
+	default:
+		return request{}, fmt.Errorf("unsupported socks version %d", first[0])
+	}
+}
+
+func negotiate5(conn net.Conn) error {
+	var methodCount [1]byte
+	if _, err := io.ReadFull(conn, methodCount[:]); err != nil {
 		return err
 	}
-	if header[0] != version5 {
-		return fmt.Errorf("unsupported socks version %d", header[0])
-	}
-	methods := make([]byte, int(header[1]))
+	methods := make([]byte, int(methodCount[0]))
 	if _, err := io.ReadFull(conn, methods); err != nil {
 		return err
 	}
@@ -165,12 +193,7 @@ func negotiate(conn net.Conn) error {
 	return errors.New("no acceptable auth method")
 }
 
-type request struct {
-	cmd     byte
-	address string
-}
-
-func readRequest(conn net.Conn) (request, error) {
+func readRequest5(conn net.Conn) (request, error) {
 	header := make([]byte, 4)
 	if _, err := io.ReadFull(conn, header); err != nil {
 		return request{}, err
@@ -188,6 +211,50 @@ func readRequest(conn net.Conn) (request, error) {
 	}
 	port := binary.BigEndian.Uint16(portRaw)
 	return request{cmd: header[1], address: net.JoinHostPort(host, strconv.Itoa(int(port)))}, nil
+}
+
+func readRequest4(conn net.Conn) (request, error) {
+	header := make([]byte, 7)
+	if _, err := io.ReadFull(conn, header); err != nil {
+		return request{}, err
+	}
+	cmd := header[0]
+	port := binary.BigEndian.Uint16(header[1:3])
+	ip := net.IPv4(header[3], header[4], header[5], header[6])
+	if _, err := readNullTerminated(conn); err != nil {
+		return request{}, err
+	}
+
+	host := ip.String()
+	if header[3] == 0 && header[4] == 0 && header[5] == 0 && header[6] != 0 {
+		domain, err := readNullTerminated(conn)
+		if err != nil {
+			return request{}, err
+		}
+		host = domain
+	}
+	return request{
+		version: version4,
+		cmd:     cmd,
+		address: net.JoinHostPort(host, strconv.Itoa(int(port))),
+	}, nil
+}
+
+func readNullTerminated(r io.Reader) (string, error) {
+	var out []byte
+	var b [1]byte
+	for {
+		if _, err := io.ReadFull(r, b[:]); err != nil {
+			return "", err
+		}
+		if b[0] == 0 {
+			return string(out), nil
+		}
+		out = append(out, b[0])
+		if len(out) > 4096 {
+			return "", errors.New("null-terminated field too long")
+		}
+	}
 }
 
 func readAddr(r io.Reader, atyp byte) (string, error) {
@@ -219,7 +286,14 @@ func readAddr(r io.Reader, atyp byte) (string, error) {
 	}
 }
 
-func writeReply(conn net.Conn, rep byte, addr net.Addr) error {
+func writeReply(conn net.Conn, version, rep byte, addr net.Addr) error {
+	if version == version4 {
+		return writeReply4(conn, rep)
+	}
+	return writeReply5(conn, rep, addr)
+}
+
+func writeReply5(conn net.Conn, rep byte, addr net.Addr) error {
 	host := "0.0.0.0"
 	port := 0
 	if addr != nil {
@@ -243,6 +317,15 @@ func writeReply(conn net.Conn, rep byte, addr net.Addr) error {
 	binary.BigEndian.PutUint16(portRaw[:], uint16(port))
 	resp = append(resp, portRaw[:]...)
 	_, err := conn.Write(resp)
+	return err
+}
+
+func writeReply4(conn net.Conn, rep byte) error {
+	code := byte(0x5b)
+	if rep == repSuccess {
+		code = 0x5a
+	}
+	_, err := conn.Write([]byte{0x00, code, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 	return err
 }
 

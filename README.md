@@ -64,6 +64,9 @@ throne-awg-core check --config awg.conf
 run --listen 127.0.0.1:1080 --config %s --verbose
 ```
 
+При рабочем обмене в verbose-логе должны появляться строки `socks: request ...`
+и `socks: tcp connect ... ok` или `socks: udp associate ...`.
+
 ## Сборка
 
 ```bash
