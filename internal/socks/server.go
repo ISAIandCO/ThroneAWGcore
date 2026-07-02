@@ -34,10 +34,12 @@ type Server struct {
 	listen  string
 	dialer  Dialer
 	verbose bool
+	timeout time.Duration
 }
 
 type Options struct {
 	Verbose bool
+	Timeout time.Duration
 }
 
 func NewServer(listen string, dialer Dialer, opts ...Options) *Server {
@@ -45,7 +47,10 @@ func NewServer(listen string, dialer Dialer, opts ...Options) *Server {
 	if len(opts) > 0 {
 		cfg = opts[0]
 	}
-	return &Server{listen: listen, dialer: dialer, verbose: cfg.Verbose}
+	if cfg.Timeout == 0 {
+		cfg.Timeout = 15 * time.Second
+	}
+	return &Server{listen: listen, dialer: dialer, verbose: cfg.Verbose, timeout: cfg.Timeout}
 }
 
 func (s *Server) ListenAndServe(ctx context.Context) error {
@@ -97,15 +102,18 @@ func (s *Server) handleConn(ctx context.Context, client net.Conn) {
 }
 
 func (s *Server) handleConnect(ctx context.Context, client net.Conn, req request) {
-	target, err := s.dialer.DialContext(ctx, "tcp", req.address)
+	start := time.Now()
+	dialCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+	target, err := s.dialer.DialContext(dialCtx, "tcp", req.address)
 	if err != nil {
-		s.logf("tcp connect %s failed: %v", req.address, err)
+		s.logf("tcp connect %s failed after %s: %v", req.address, time.Since(start).Round(time.Millisecond), err)
 		_ = writeReply(client, req.version, repFailure, nil)
 		return
 	}
 	defer target.Close()
 
-	s.logf("tcp connect %s ok", req.address)
+	s.logf("tcp connect %s ok after %s", req.address, time.Since(start).Round(time.Millisecond))
 	if err := writeReply(client, req.version, repSuccess, target.LocalAddr()); err != nil {
 		return
 	}
@@ -403,7 +411,9 @@ func (r *udpRelay) flow(ctx context.Context, clientAddr net.Addr, targetAddr str
 	}
 	r.mu.Unlock()
 
-	target, err := r.dialer.DialContext(ctx, "udp", targetAddr)
+	dialCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	target, err := r.dialer.DialContext(dialCtx, "udp", targetAddr)
 	if err != nil {
 		return nil, err
 	}

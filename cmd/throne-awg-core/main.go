@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/throneawgcore/throne-awg-core/internal/awg"
 	"github.com/throneawgcore/throne-awg-core/internal/socks"
@@ -32,6 +33,8 @@ func run(args []string) error {
 		return runCore(args[1:])
 	case "check":
 		return checkConfig(args[1:])
+	case "probe":
+		return probeConfig(args[1:])
 	case "version":
 		fmt.Println(version)
 		return nil
@@ -101,10 +104,45 @@ func checkConfig(args []string) error {
 	return nil
 }
 
+func probeConfig(args []string) error {
+	fs := flag.NewFlagSet("probe", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	configPath := fs.String("config", "", "path to AmneziaWG config")
+	target := fs.String("target", "1.1.1.1:443", "TCP target to dial through AmneziaWG")
+	timeout := fs.Duration("timeout", 15*time.Second, "probe timeout")
+	verbose := fs.Bool("verbose", false, "enable verbose AmneziaWG logs")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *configPath == "" {
+		return errors.New("missing --config")
+	}
+	cfg, err := awg.LoadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	runtime, err := awg.Start(ctx, cfg, awg.Options{Verbose: *verbose})
+	if err != nil {
+		return err
+	}
+	defer runtime.Close()
+	if err := runtime.ProbeTCP(ctx, *target, *timeout); err != nil {
+		return fmt.Errorf("probe tcp %s: %w", *target, err)
+	}
+	fmt.Printf("probe tcp %s ok\n", *target)
+	return nil
+}
+
 func usage() error {
 	fmt.Fprintln(os.Stderr, `Usage:
   throne-awg-core run --listen 127.0.0.1:1080 --config <path>
   throne-awg-core check --config <path>
+  throne-awg-core probe --config <path> --target 1.1.1.1:443
   throne-awg-core version`)
 	return nil
 }

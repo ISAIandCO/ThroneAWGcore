@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
+	"strconv"
 	"sync"
+	"time"
 
 	"github.com/amnezia-vpn/amneziawg-go/conn"
 	"github.com/amnezia-vpn/amneziawg-go/device"
@@ -68,7 +71,39 @@ func Start(ctx context.Context, cfg *Config, opts Options) (*Runtime, error) {
 }
 
 func (r *Runtime) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	if network == "tcp" || network == "tcp4" || network == "tcp6" {
+		if addr, ok := parseAddrPort(address); ok {
+			return r.net.DialContextTCPAddrPort(ctx, addr)
+		}
+	}
 	return r.net.DialContext(ctx, network, address)
+}
+
+func parseAddrPort(address string) (netip.AddrPort, bool) {
+	host, portRaw, err := net.SplitHostPort(address)
+	if err != nil {
+		return netip.AddrPort{}, false
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return netip.AddrPort{}, false
+	}
+	port, err := strconv.ParseUint(portRaw, 10, 16)
+	if err != nil {
+		return netip.AddrPort{}, false
+	}
+	return netip.AddrPortFrom(ip, uint16(port)), true
+}
+
+func (r *Runtime) ProbeTCP(ctx context.Context, target string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	conn, err := r.DialContext(ctx, "tcp", target)
+	if err != nil {
+		return err
+	}
+	_ = conn.Close()
+	return nil
 }
 
 func (r *Runtime) Close() {
