@@ -5,6 +5,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to create/update when running manually"
+        required: true
+        default: "v0.1.0"
 
 permissions:
   contents: write
@@ -47,9 +52,10 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
+          RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
         run: |
           mkdir -p dist
-          version="${GITHUB_REF_NAME:-dev}"
+          version="${RELEASE_VERSION:-dev}"
           name="throne-awg-core-${version}-${GOOS}-${GOARCH}"
           bin="dist/${name}/throne-awg-core${{ matrix.ext }}"
           mkdir -p "dist/${name}"
@@ -74,7 +80,7 @@ jobs:
 
   publish:
     needs: release
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -84,5 +90,6 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
           files: artifacts/*
           generate_release_notes: true

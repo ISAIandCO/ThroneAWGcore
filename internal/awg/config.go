@@ -254,13 +254,28 @@ func parsePrefixes(value string) ([]netip.Prefix, error) {
 	}
 	prefixes := make([]netip.Prefix, 0, len(items))
 	for _, item := range items {
-		prefix, err := netip.ParsePrefix(item)
+		prefix, err := parsePrefixOrHost(item)
 		if err != nil {
 			return nil, fmt.Errorf("invalid prefix %q: %w", item, err)
 		}
 		prefixes = append(prefixes, prefix)
 	}
 	return prefixes, nil
+}
+
+func parsePrefixOrHost(value string) (netip.Prefix, error) {
+	if prefix, err := netip.ParsePrefix(value); err == nil {
+		return prefix, nil
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	bits := 128
+	if addr.Is4() {
+		bits = 32
+	}
+	return netip.PrefixFrom(addr, bits), nil
 }
 
 func parseAddrs(value string) ([]netip.Addr, error) {

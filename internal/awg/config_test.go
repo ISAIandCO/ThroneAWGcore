@@ -15,7 +15,7 @@ func TestParseValidConfig(t *testing.T) {
 	cfg, err := ParseConfig(strings.NewReader(`
 [Interface]
 PrivateKey = ` + testPrivateKey + `
-Address = 10.8.0.2/32, fd00::2/128
+Address = 10.8.0.2, fd00::2
 DNS = 1.1.1.1, 2606:4700:4700::1111
 MTU = 1280
 Jc = 5
@@ -51,8 +51,49 @@ PersistentKeepalive = 25
 	if got := len(cfg.Peers); got != 1 {
 		t.Fatalf("peer count = %d", got)
 	}
+	if got := cfg.Address[0].String(); got != "10.8.0.2/32" {
+		t.Fatalf("ipv4 host prefix = %q", got)
+	}
+	if got := cfg.Address[1].String(); got != "fd00::2/128" {
+		t.Fatalf("ipv6 host prefix = %q", got)
+	}
 	if got := cfg.Peers[0].PersistentKeepaliveInterval; got != 25 {
 		t.Fatalf("keepalive = %d", got)
+	}
+}
+
+func TestParseWarpgenAddressWithoutMask(t *testing.T) {
+	cfg, err := ParseConfig(strings.NewReader(`
+[Interface]
+PrivateKey = ` + testPrivateKey + `
+Address = 172.16.0.2, 2606:4700:110:83dc:b4fe:df11:133c:2e96
+DNS = 1.1.1.1, 2606:4700:4700::1111
+MTU = 1280
+Jc = 4
+Jmin = 40
+Jmax = 70
+H1 = 1
+H2 = 2
+H3 = 3
+H4 = 4
+
+[Peer]
+PublicKey = ` + testPublicKey + `
+AllowedIPs = 0.0.0.0/0, ::/0
+Endpoint = 162.159.195.38:955
+PersistentKeepalive = 25
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Address[0].String(); got != "172.16.0.2/32" {
+		t.Fatalf("ipv4 address = %q", got)
+	}
+	if got := cfg.Address[1].String(); got != "2606:4700:110:83dc:b4fe:df11:133c:2e96/128" {
+		t.Fatalf("ipv6 address = %q", got)
 	}
 }
 
