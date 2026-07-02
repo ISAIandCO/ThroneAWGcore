@@ -1,2 +1,2 @@
 # ThroneAWGcore
-Модуль AWG для Throne (NecoBox)
+Модуль AWG для Throne (NekoBox)
