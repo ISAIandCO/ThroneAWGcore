@@ -30,12 +30,21 @@ type Dialer interface {
 }
 
 type Server struct {
-	listen string
-	dialer Dialer
+	listen  string
+	dialer  Dialer
+	verbose bool
 }
 
-func NewServer(listen string, dialer Dialer) *Server {
-	return &Server{listen: listen, dialer: dialer}
+type Options struct {
+	Verbose bool
+}
+
+func NewServer(listen string, dialer Dialer, opts ...Options) *Server {
+	var cfg Options
+	if len(opts) > 0 {
+		cfg = opts[0]
+	}
+	return &Server{listen: listen, dialer: dialer, verbose: cfg.Verbose}
 }
 
 func (s *Server) ListenAndServe(ctx context.Context) error {
@@ -70,6 +79,7 @@ func (s *Server) handleConn(ctx context.Context, client net.Conn) {
 
 	req, err := readRequest(client)
 	if err != nil {
+		s.logf("request error from %s: %v", client.RemoteAddr(), err)
 		return
 	}
 
@@ -86,6 +96,7 @@ func (s *Server) handleConn(ctx context.Context, client net.Conn) {
 func (s *Server) handleConnect(ctx context.Context, client net.Conn, address string) {
 	target, err := s.dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
+		s.logf("tcp connect %s failed: %v", address, err)
 		_ = writeReply(client, repFailure, nil)
 		return
 	}
@@ -104,6 +115,7 @@ func (s *Server) handleUDP(ctx context.Context, client net.Conn) {
 	}
 	udpConn, err := net.ListenPacket("udp", net.JoinHostPort(host, "0"))
 	if err != nil {
+		s.logf("udp associate listen failed: %v", err)
 		_ = writeReply(client, repFailure, nil)
 		return
 	}
@@ -121,8 +133,14 @@ func (s *Server) handleUDP(ctx context.Context, client net.Conn) {
 		_ = udpConn.Close()
 	}()
 
-	relay := newUDPRelay(s.dialer, udpConn)
+	relay := newUDPRelay(s.dialer, udpConn, s.logf)
 	relay.serve(ctx)
+}
+
+func (s *Server) logf(format string, args ...any) {
+	if s.verbose {
+		fmt.Printf("socks: "+format+"\n", args...)
+	}
 }
 
 func negotiate(conn net.Conn) error {
@@ -251,6 +269,7 @@ type udpRelay struct {
 	packet net.PacketConn
 	mu     sync.Mutex
 	flows  map[string]*udpFlow
+	logf   func(string, ...any)
 }
 
 type udpFlow struct {
@@ -258,8 +277,8 @@ type udpFlow struct {
 	client net.Addr
 }
 
-func newUDPRelay(dialer Dialer, packet net.PacketConn) *udpRelay {
-	return &udpRelay{dialer: dialer, packet: packet, flows: map[string]*udpFlow{}}
+func newUDPRelay(dialer Dialer, packet net.PacketConn, logf func(string, ...any)) *udpRelay {
+	return &udpRelay{dialer: dialer, packet: packet, flows: map[string]*udpFlow{}, logf: logf}
 }
 
 func (r *udpRelay) serve(ctx context.Context) {
@@ -280,10 +299,12 @@ func (r *udpRelay) serve(ctx context.Context) {
 		}
 		udpReq, err := parseUDPDatagram(buf[:n])
 		if err != nil {
+			r.logf("udp parse from %s failed: %v", clientAddr, err)
 			continue
 		}
 		flow, err := r.flow(ctx, clientAddr, udpReq.address)
 		if err != nil {
+			r.logf("udp connect %s failed: %v", udpReq.address, err)
 			continue
 		}
 		_, _ = flow.target.Write(udpReq.payload)

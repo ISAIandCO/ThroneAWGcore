@@ -20,7 +20,11 @@ type Runtime struct {
 	once sync.Once
 }
 
-func Start(ctx context.Context, cfg *Config) (*Runtime, error) {
+type Options struct {
+	Verbose bool
+}
+
+func Start(ctx context.Context, cfg *Config, opts Options) (*Runtime, error) {
 	ipc, err := cfg.IPC()
 	if err != nil {
 		return nil, err
@@ -32,14 +36,20 @@ func Start(ctx context.Context, cfg *Config) (*Runtime, error) {
 	}
 
 	logger := device.Logger{
-		Verbosef: func(format string, args ...any) {
-			fmt.Fprintf(os.Stderr, "awg: "+format+"\n", args...)
-		},
+		Verbosef: func(string, ...any) {},
 		Errorf: func(format string, args ...any) {
 			fmt.Fprintf(os.Stderr, "awg error: "+format+"\n", args...)
 		},
 	}
-	dev := device.NewDevice(tdev, conn.NewDefaultBind(), &logger)
+	if opts.Verbose {
+		logger.Verbosef = func(format string, args ...any) {
+			fmt.Fprintf(os.Stderr, "awg: "+format+"\n", args...)
+		}
+	}
+	// Prefer the plain UDP bind for an external desktop helper. On Windows,
+	// NewDefaultBind selects WinRing/RIO when available; StdNetBind is slower
+	// but avoids RIO-specific compatibility issues in an Extra Core process.
+	dev := device.NewDevice(tdev, conn.NewStdNetBind(), &logger)
 	if err := dev.IpcSet(ipc); err != nil {
 		dev.Close()
 		return nil, fmt.Errorf("configure awg device: %w", err)

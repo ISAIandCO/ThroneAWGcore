@@ -58,6 +58,12 @@ PersistentKeepalive = 25
 throne-awg-core check --config awg.conf
 ```
 
+Для подробной диагностики можно временно включить verbose-логи:
+
+```text
+run --listen 127.0.0.1:1080 --config %s --verbose
+```
+
 ## Сборка
 
 ```bash
@@ -87,6 +93,9 @@ git push origin v0.1.0
 
 - Если Throne пишет, что Extra Core завершился, запустите `check` с тем же
   конфигом и проверьте ключи, endpoint и `AllowedIPs`.
+- Сообщения вида `Handshake did not complete` и `Retrying handshake` относятся
+  к verbose-логам AmneziaWG. В обычном режиме они скрыты; включайте
+  `--verbose` только для диагностики.
 - Если `Address` в конфиге указан без маски, ядро автоматически использует
   `/32` для IPv4 и `/128` для IPv6.
 - Если порт занят, поменяйте одновременно `Socks port` и `--listen`.

@@ -47,6 +47,7 @@ func runCore(args []string) error {
 	fs.SetOutput(os.Stderr)
 	listen := fs.String("listen", "127.0.0.1:1080", "SOCKS5 listen address")
 	configPath := fs.String("config", "", "path to AmneziaWG config")
+	verbose := fs.Bool("verbose", false, "enable verbose AmneziaWG and SOCKS logs")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -65,13 +66,13 @@ func runCore(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	runtime, err := awg.Start(ctx, cfg)
+	runtime, err := awg.Start(ctx, cfg, awg.Options{Verbose: *verbose})
 	if err != nil {
 		return err
 	}
 	defer runtime.Close()
 
-	server := socks.NewServer(*listen, runtime)
+	server := socks.NewServer(*listen, runtime, socks.Options{Verbose: *verbose})
 	fmt.Printf("throne-awg-core %s listening on %s\n", version, *listen)
 	return server.ListenAndServe(ctx)
 }
