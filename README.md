@@ -1,16 +1,40 @@
 # ThroneAWGcore
 
-`throne-awg-core` - внешнее ядро AmneziaWG для Throne. Throne запускает его как
-Extra Core, подключается к локальному SOCKS5, а сам `throne-awg-core` проводит
-TCP/UDP-трафик через AmneziaWG в userspace без системного TUN-интерфейса.
+`throne-awg-core` - userspace SOCKS5-прокси поверх AmneziaWG. Он принимает
+обычный WireGuard/AmneziaWG INI-конфиг, поднимает AmneziaWG через netstack и
+отдает локальный SOCKS5 без системного TUN-интерфейса и root/admin-доступа.
+
+Throne не обязателен: бинарник можно использовать как самостоятельный локальный
+SOCKS5-прокси. Для Throne он дополнительно подходит как штатное внешнее ядро
+через профиль `ExtraCore`.
 
 ## Возможности
 
-- Не требует изменений в Throne.
-- Работает через штатный профиль `ExtraCore`.
+- Самостоятельный SOCKS5-прокси: по умолчанию слушает `127.0.0.1:1080`.
+- Не требует изменений в Throne и работает через штатный профиль `ExtraCore`.
 - Поддерживает Windows, Linux и macOS x64.
 - Принимает обычный WireGuard/AmneziaWG INI-конфиг.
 - Поддерживает `Jc`, `Jmin`, `Jmax`, `S1-S4`, `H1-H4`, `I1-I5`.
+- По умолчанию пытается автоматически привязать UDP-сокеты AWG к системному
+  интерфейсу маршрута до endpoint, чтобы не попадать в уже включенный TUN.
+
+## Быстрый старт без Throne
+
+```bash
+throne-awg-core run --config awg.conf
+```
+
+После запуска укажите в приложении SOCKS5-прокси:
+
+- адрес: `127.0.0.1`
+- порт: `1080`
+- авторизация: выключена
+
+Переопределить адрес прослушивания можно флагом `--listen`:
+
+```bash
+throne-awg-core run --config awg.conf --listen 127.0.0.1:2080
+```
 
 ## Быстрый старт в Throne
 
@@ -20,7 +44,7 @@ TCP/UDP-трафик через AmneziaWG в userspace без системног
    - `Socks address`: `127.0.0.1`
    - `Socks port`: `1080`
    - `Core path`: путь к `throne-awg-core` или `throne-awg-core.exe`
-   - `Args`: `run --listen 127.0.0.1:1080 --config %s`
+   - `Args`: `run --config %s`
    - `Config`: содержимое AmneziaWG-конфига.
 4. Запустите профиль.
 
@@ -61,7 +85,7 @@ throne-awg-core check --config awg.conf
 Для подробной диагностики можно временно включить verbose-логи:
 
 ```text
-run --listen 127.0.0.1:1080 --config %s --verbose
+run --config %s --verbose
 ```
 
 При рабочем обмене в verbose-логе должны появляться строки `socks: request ...`
@@ -74,6 +98,54 @@ throne-awg-core probe --config awg.conf --target 1.1.1.1:443 --verbose
 ```
 
 Если нужно проверить альтернативный UDP bind на Windows, добавьте `--std-bind`.
+
+### Если включен TUN в Throne
+
+Если `probe` работает без TUN Throne, но перестает работать при включенном TUN,
+значит исходящий UDP-трафик самого AmneziaWG-процесса попадает обратно в TUN
+Throne. Автоопределение системного интерфейса включено по умолчанию, поэтому
+обычно достаточно базового запуска:
+
+```text
+run --config %s
+```
+
+Проверить тот же обход можно без Throne:
+
+```powershell
+.\throne-awg-core.exe probe --config .\awg.conf --target google.com:443 --verbose
+```
+
+В verbose-логе должна появиться строка вида
+`awg: bound UDP sockets to interface Ethernet (12)`.
+
+Если endpoint указан доменом и системный DNS под TUN Throne мешает
+автоопределению, используйте ручной индекс интерфейса.
+
+В PowerShell найдите индекс активного адаптера:
+
+```powershell
+Get-NetAdapter | Where-Object Status -eq Up | Format-Table ifIndex,Name,InterfaceDescription
+```
+
+Выберите обычный сетевой адаптер с интернетом, не Throne/Wintun/TUN, и добавьте
+его индекс в аргументы Extra Core:
+
+```text
+run --config %s --interface-index 12
+```
+
+Автоопределение можно отключить:
+
+```text
+run --config %s --no-auto-interface
+```
+
+Проверка ручного варианта:
+
+```powershell
+.\throne-awg-core.exe probe --config .\awg.conf --target google.com:443 --verbose --interface-index 12
+```
 
 ## Сборка
 
@@ -96,7 +168,8 @@ git push origin v0.1.0
 ## Ограничения
 
 - Это не системный VPN и не создает TUN-интерфейс ОС.
-- Весь трафик должен идти через Extra Core профиль Throne.
+- Проксируемое приложение должно уметь работать через SOCKS5 или через клиент,
+  который направляет трафик в этот SOCKS5.
 - SOCKS5 работает без авторизации и должен слушать только loopback-адрес.
 - Первый релиз рассчитан на `amd64` desktop-платформы.
 

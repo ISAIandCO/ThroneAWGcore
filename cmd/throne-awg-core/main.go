@@ -52,11 +52,18 @@ func runCore(args []string) error {
 	configPath := fs.String("config", "", "path to AmneziaWG config")
 	verbose := fs.Bool("verbose", false, "enable verbose AmneziaWG and SOCKS logs")
 	stdBind := fs.Bool("std-bind", false, "force the portable UDP bind instead of the platform default")
+	interfaceIndex := fs.Uint("interface-index", 0, "bind AmneziaWG UDP sockets to an OS network interface index")
+	autoInterface := fs.Bool("auto-interface", true, "auto-detect and bind AmneziaWG UDP sockets to the OS route interface")
+	noAutoInterface := fs.Bool("no-auto-interface", false, "disable automatic OS interface detection")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *configPath == "" {
 		return errors.New("missing --config")
+	}
+	runtimeOptions, err := parseRuntimeOptions(*verbose, *stdBind, *interfaceIndex, *autoInterface, *noAutoInterface)
+	if err != nil {
+		return err
 	}
 
 	cfg, err := awg.LoadConfig(*configPath)
@@ -70,7 +77,7 @@ func runCore(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	runtime, err := awg.Start(ctx, cfg, awg.Options{Verbose: *verbose, StdBind: *stdBind})
+	runtime, err := awg.Start(ctx, cfg, runtimeOptions)
 	if err != nil {
 		return err
 	}
@@ -113,11 +120,18 @@ func probeConfig(args []string) error {
 	timeout := fs.Duration("timeout", 15*time.Second, "probe timeout")
 	verbose := fs.Bool("verbose", false, "enable verbose AmneziaWG logs")
 	stdBind := fs.Bool("std-bind", false, "force the portable UDP bind instead of the platform default")
+	interfaceIndex := fs.Uint("interface-index", 0, "bind AmneziaWG UDP sockets to an OS network interface index")
+	autoInterface := fs.Bool("auto-interface", true, "auto-detect and bind AmneziaWG UDP sockets to the OS route interface")
+	noAutoInterface := fs.Bool("no-auto-interface", false, "disable automatic OS interface detection")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *configPath == "" {
 		return errors.New("missing --config")
+	}
+	runtimeOptions, err := parseRuntimeOptions(*verbose, *stdBind, *interfaceIndex, *autoInterface, *noAutoInterface)
+	if err != nil {
+		return err
 	}
 	cfg, err := awg.LoadConfig(*configPath)
 	if err != nil {
@@ -128,7 +142,7 @@ func probeConfig(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	runtime, err := awg.Start(ctx, cfg, awg.Options{Verbose: *verbose, StdBind: *stdBind})
+	runtime, err := awg.Start(ctx, cfg, runtimeOptions)
 	if err != nil {
 		return err
 	}
@@ -140,11 +154,24 @@ func probeConfig(args []string) error {
 	return nil
 }
 
+func parseRuntimeOptions(verbose, stdBind bool, interfaceIndex uint, autoInterface, noAutoInterface bool) (awg.Options, error) {
+	if interfaceIndex > uint(^uint32(0)) {
+		return awg.Options{}, fmt.Errorf("--interface-index is out of range: %d", interfaceIndex)
+	}
+	auto := autoInterface && !noAutoInterface && interfaceIndex == 0
+	return awg.Options{
+		Verbose:        verbose,
+		StdBind:        stdBind,
+		InterfaceIndex: uint32(interfaceIndex),
+		AutoInterface:  auto,
+	}, nil
+}
+
 func usage() error {
 	fmt.Fprintln(os.Stderr, `Usage:
-  throne-awg-core run --listen 127.0.0.1:1080 --config <path>
+  throne-awg-core run --config <path> [--listen 127.0.0.1:1080] [--interface-index <ifIndex>|--no-auto-interface]
   throne-awg-core check --config <path>
-  throne-awg-core probe --config <path> --target 1.1.1.1:443
+  throne-awg-core probe --config <path> [--target 1.1.1.1:443] [--interface-index <ifIndex>|--no-auto-interface]
   throne-awg-core version`)
 	return nil
 }
