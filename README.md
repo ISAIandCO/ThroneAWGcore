@@ -117,7 +117,7 @@ run --config %s
 ```
 
 В verbose-логе должна появиться строка вида
-`awg: bound UDP sockets to interface Ethernet (12)`.
+`awg: bound UDP sockets to interface index 12, iftype 6, metric 25`.
 
 Если endpoint указан доменом и системный DNS под TUN Throne мешает
 автоопределению, используйте ручной индекс интерфейса.
